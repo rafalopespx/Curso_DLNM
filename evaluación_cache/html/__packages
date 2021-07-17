@@ -1,0 +1,13 @@
+base
+knitr
+rmdformats
+dlnm
+tsibble
+fabletools
+feasts
+ggplot2
+rmarkdown
+dplyr
+tsModel
+tibble
+stringr
