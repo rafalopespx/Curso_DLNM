@@ -1,0 +1,729 @@
+---
+title: "Ejercicio de evaluación"
+subtitle: "Modelización de regresión de series temporales con R.\n XIV Summer School MESIO UPC-UB."
+date: "`r Sys.Date()`"
+author: "Rafael Lopes Paixão da Silva"
+output:
+  rmdformats::html_clean:
+    highlight: kate
+bibliography: bib/references.bib
+nocite: '@*'
+---
+
+
+```{r setup, include=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+	             cache=FALSE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+# Who I am? {#who}
+
+I am Rafael Lopes Paixão da Silva, Brazilian, physicists and PhD Candidate working with climate and public heatlh data from Brazil.
+
+# Objetives {#obj}
+ 
+Here I present the resolution for the questions the will serve as valuation of the 
+"Modelización de regresión de series temporales con R.
+XIV Summer School MESIO UPC-UB."
+
+My way to respond these questions is by text, mathematical formulation, and/or data inspection, as well applying the concepts learned through the course.
+The valuation was to analyze the cardiovascular mortality data from the city of Chicago, ranging from 1987 to 2000, with the temperature and atmospheric contamination by particles. 
+
+# Question 1 {#q1}
+
+**Make a descriptive analysis of the cardiovascular mortality data, which the components of seasonality and trending? Is there any component of short-term? Between the days of week?**
+
+The data consist of daily counts mortality, `death` colunm, stratification of the daily mortality by causes, `cvd` for cardiovascular deaths, `resp` for respiratory deaths, together there are values of mean temperature in the city `temp`, dew point temperature `dptp`, `rhum` relative humidity, atmospheric particle contamination `pm10`, `o3` for the level Ozone
+
+```{r load}
+library(dlnm)
+data<-chicagoNMMAPS
+head(data, 20)
+```
+
+```{r trends}
+library(tsibble)
+library(feasts)
+library(ggplot2)
+data_tsibble<-as_tsibble(data, index = "date")
+
+# box plot year
+ggplot(data_tsibble, 
+       aes(as.factor(year), cvd))  +
+  geom_boxplot()+
+  theme_minimal()+
+  labs(x = "year", y = "Counts (N)")
+
+# blox plot month
+ggplot(data_tsibble, 
+       aes(as.factor(month), cvd))  +
+  geom_boxplot()+
+  theme_minimal()+
+  labs(x = "month of the year", y = "Counts (N)")
+
+# box plot day of the week
+ggplot(data_tsibble, 
+       aes(as.factor(dow), cvd))  +
+  geom_boxplot()+
+  theme_minimal()+
+  labs(x = "day of the week", y = "Counts (N)")
+
+```
+
+From the box plots, we see no special trend and/or variations on the series of cardiovascular mortality, another test is to decompose each series in trend, season e residuals components, we proceed to do this by the tools of ``
+
+```{r trends-decomp}
+library(feasts)
+# Trend decomposition
+## Yearly
+yearly_decomposition<-data_tsibble %>%
+  model(STL(cvd ~ season(period = 365.25))) %>%
+  components() %>% 
+  autoplot()+
+  theme_minimal()
+## Monthly
+monthly_decomposition<-data_tsibble %>%
+  model(STL(cvd ~ season(period = 30.44))) %>%
+  components() %>% 
+  autoplot()+
+  theme_minimal()
+## Weekly
+weekly_decomposition<-data_tsibble %>%
+  model(STL(cvd ~ season(period = 7.02))) %>%
+  components() %>% 
+  autoplot()+
+  theme_minimal()
+
+yearly_decomposition
+monthly_decomposition
+weekly_decomposition
+```
+
+With the trend decomposition, we see that for each period specified, over a year in 24 hours units, a month day in 24 hours units, and a week in 24 hours units, there are some different trends: 
+
+* On year units, we see there are a very clear decreasing trend, meaning a decrease in mean mortality by cardiovascular mortality.
+* On month units, there are a seasonality of going up and down, meaning on each year there is a rise and fall in the counts of cardiovascular deaths.
+* On week units, we see no more seasonality, just a very smooth variation of up and down, meaning probably a cycle of more and less deaths by cardiovascular causes, in some specific weeks of the year. 
+
+Over all trends decomposition, we see a rough abnormality, which probably has relation with a specific event.
+
+# Question 2 {#q2}
+
+**Calculate the dispersion and the autocorrelation of the data. How much the dispersion has on the data? The data distributes independent equally?**
+
+```{r acf}
+# Autocorrelation
+acf_data<-acf(data$cvd)
+```
+
+From the plot of autocorrelation function we can see there are very strong self-similarity on the series of mortality by cardiovascular causes, this suggest we saw before that there are seasonality trend on the series. Meaning, the mortality has repeated cycles of up and down. We can check this by calculating the variance and mean values for each period of time. 
+
+```{r variance}
+library(rmarkdown)
+# Overdispersion
+yearly_var_data<-var_tiled_var(data$cvd, .size = 365)
+monthly_var_data<-var_tiled_var(data$cvd, .size = 30)
+weekly_var_data<-var_tiled_var(data$cvd, .size = 7)
+yearly_mean_data<-var_tiled_mean(data$cvd, .size = 365)
+monthly_mean_data<-var_tiled_mean(data$cvd, .size = 30)
+weekly_mean_data<-var_tiled_mean(data$cvd, .size = 7)
+
+var_mean<-data.frame(matrix(data = c(yearly_var_data, yearly_mean_data, 
+                                        monthly_var_data, monthly_mean_data, 
+                                        weekly_var_data, weekly_mean_data), 
+                               nrow = 3, ncol = 2), row.names = c("yearly", "monthly", "weekly"))
+names(var_mean)<-c("Variance", "Mean")
+paged_table(var_mean)
+```
+
+This suggests that on each week we have a great dispersion on the counts of deaths by cardiovascular causes. A interpretation of this is that there are some days with almost $~6$ more deaths than the *Mean* for the week, this is not unusual due to we it is widely known that deaths, or the registration of it, will probably follow the cycles or working week, as well could be influenced by factor related to the this cycle, like stress, sleeping pattern, etc.
+
+# Question 3 {#q3}
+
+**By a Poisson model, adjust the mortality by cardiovascular causes, Which functions are adequate? Calendar Variables, periodic functions, flexible functions (splines?), how many degree of freedom? How much better the adjustment of the model (qAIC) gets the final one?**
+
+## Calendar Variables {#calendar-var}
+
+We start by modelling with the calendar variables disposables on the original dataset. 
+
+```{r model-calendar}
+# adjusting models
+model0 <- glm(cvd ~ 1, data=data, family=quasipoisson)
+model1 <- glm(cvd ~ factor(year), data=data, family=quasipoisson)
+model2 <- glm(cvd ~ factor(year) + factor(month), data=data, family=quasipoisson)
+# preds
+pred0 <- predict(model0, type="response")
+pred1 <- predict(model1, type="response")
+pred2 <- predict(model2, type="response")
+# plots
+plot(data$date, data$cvd, pch=19, cex=0.2, col=grey(0.6),
+  ylab="Nº Deaths", xlab="Date")
+lines(data$date, pred0, lwd=2, col="red")
+lines(data$date, pred1, lwd=2, col="blue")
+lines(data$date, pred1, lwd=2, col="green")
+# for visualizing purposes
+plot(data$date, data$cvd, pch=19, cex=0.2, col=grey(0.6),
+  ylab="Nº Deaths", xlab="Date", ylim = c(0, 100))
+lines(data$date, pred0, lwd=2, col="red")
+lines(data$date, pred1, lwd=2, col="blue")
+lines(data$date, pred1, lwd=2, col="green")
+
+```
+
+This hasn't went very well! We only are trying to infer the curves of deaths by cardiovascular causes splitting the components on the natural groups of time.
+
+## Periodic Functions {#periodic-var}
+
+Now we proceed by adjusting periodic functions that emulates different spacing of time, a year period, a semestral period, a trimestral period, a quadrimestral period. 
+<!-- Before we adjust the models, and to avoid over smoothing in the scale, we take the first filtering decision on the data, we exclude those days that has more than 2 standard deviation from the mean and those that has less than 2 SD from the mean too. This try to give to the models a series that has less days with huge counts due to extraordinary cases, such the period on 1995.  -->
+
+```{r periodic-var}
+library(dplyr)
+library(tsModel)
+library(splines)
+data_periodic<-data %>% 
+  filter(!is.na(cvd)) %>% 
+  mutate(trend = row_number())
+# periodic
+year_period <- harmonic(data_periodic$date,nfreq=1,period=365.25)
+semester_period <- harmonic(data_periodic$date,nfreq=2,period=365.25)
+trimester_period <- harmonic(data_periodic$date,nfreq=3,period=365.25)
+quadrimester_period <- harmonic(data_periodic$date,nfreq=4,period=365.25)
+
+model3 <- glm(cvd ~ trend + year_period, data=data_periodic, family=quasipoisson)
+pred3<-predict(model3, type = "response")
+model4 <- glm(cvd ~ trend + semester_period, data=data_periodic, family=quasipoisson)
+pred4<-predict(model4, type = "response")
+model5 <- glm(cvd ~ trend + trimester_period, data=data_periodic, family=quasipoisson)
+pred5<-predict(model5, type = "response")
+model6 <- glm(cvd ~ trend + quadrimester_period, data=data_periodic, family=quasipoisson)
+pred6<-predict(model6, type = "response")
+
+data_periodic<-cbind(data_periodic, pred3, pred4, pred5, pred6)
+
+limitis<-c(min = mean(data$cvd)-2*sd(data$cvd), max = mean(data$cvd)+2*sd(data$cvd)) # To visualize purposes
+
+plt_periodic<- data_periodic %>% 
+  ggplot(aes(x = date, y = cvd, col = ""), alpha = 0.05)+
+  geom_point(cex = 0.2)+
+  geom_line(aes(y = pred3, col = "Yearly Periodic"))+
+  geom_line(aes(y = pred4, col = "Semestrely Periodic"))+
+  geom_line(aes(y = pred5, col = "Trimestrely Periodic"))+
+  geom_line(aes(y = pred6, col = "Quadrimestrely Periodic"))+
+  theme_minimal()+
+  scale_colour_manual(values = c("grey","red", "blue", "green", "dark orange"), 
+                      aesthetics = "colour")+
+  labs(x = "Day of Year", y = "Nº Deaths")+
+  lims(y = limitis)+
+  theme(legend.position = "bottom")
+
+plt_periodic
+```
+
+The peridic functions has adjusted each periods that has been proposed, but it only a function that works around the mean of the series, it can not account for the extraordinary events, such as the great number of deaths in some months of 1995. This suggests we need models that can work with this. 
+Lastly we compare those models, and choose the best one as the model that has the mininum *qAIC*, the quasi-Aikaike-Information-Criteria, as follows:
+
+```{r qAIC-periodic-models}
+QAICM <- function(model,type="logLik") {
+  if(!model$family$family%in%c("poisson","quasipoisson")) {
+    stop("only for poisson/quasipoisson family")
+  }
+  phi <- summary(model)$dispersion
+  if(type=="dev") {
+    QAICm <- deviance(model) + 2*summary(model)$df[3]*phi
+  } else {
+    loglik <- sum(dpois( model$y, model$fitted.values, log=TRUE))
+    QAICm <- -2*loglik + 2*(summary(model)$n-summary(model)$residual.df)*phi
+  }
+  return(QAICm)
+} # Copied from tutorials to avoid rendering problms on the markdown generation
+
+qaic_model3<-QAICM(model3, "dev")
+qaic_model4<-QAICM(model4, "dev")
+qaic_model5<-QAICM(model5, "dev")
+qaic_model6<-QAICM(model6, "dev")
+
+qaic_table<-data.frame(data = c(qaic_model3, qaic_model4, qaic_model5, qaic_model6))
+qaic_table$model<-c("Yearly periodic", "Semestrely Periodic", "Trimestrely Periodic", "Quadrimestrely Periodic")
+names(qaic_table)<-"qAIC"
+paged_table(qaic_table)
+```
+
+From *qAIC*, we see the model with a function that emulates a trimester periods, has the best fit. But it only gains from the quadrimester periodic model slightly, in theory as we add more and more periods this will add more degrees of freedom to the model and the fit will be better. This is not a necessarily a better model, it only can be an effect of over fitting, this is we need a criteria to decide between models, and the *qAIC* makes this for us.
+
+## Flexible Functions {#flexible-var}
+
+We can try to over come this with flexible functions, that will be more smoothed on the fitting for the periods. We choose a natural spline function, with different degrees of freedom, again to account for the different period of the calendar.
+
+```{r spline-models}
+data_flexible<-data %>% 
+  filter(!is.na(cvd)) %>% 
+  mutate(trend = row_number())
+# periodic
+spline1 <- ns(data_flexible$trend, df=12) # 1 df by year
+spline2 <- ns(data_flexible$trend, df=24) # 2 df by year
+spline3 <- ns(data_flexible$trend, df=48) # 4 df by year
+spline4 <- ns(data_flexible$trend, df=72) # 8 df by year
+
+model7 <- glm(cvd ~ spline1, data=data_periodic, family=quasipoisson)
+pred7<-predict(model7, type = "response")
+model8 <- glm(cvd ~ spline2, data=data_periodic, family=quasipoisson)
+pred8<-predict(model8, type = "response")
+model9 <- glm(cvd ~ spline3, data=data_periodic, family=quasipoisson)
+pred9<-predict(model9, type = "response")
+model10 <- glm(cvd ~ spline4, data=data_periodic, family=quasipoisson)
+pred10<-predict(model10, type = "response")
+
+data_flexible<-cbind(data_flexible, pred7, pred8, pred9, pred10)
+
+limitis<-c(min = mean(data$cvd)-2*sd(data$cvd), max = mean(data$cvd)+2*sd(data$cvd)) # To visualize purposes
+
+plt_flexible<- data_flexible %>% 
+  ggplot(aes(x = date, y = cvd, col = ""), alpha = 0.05)+
+  geom_point(cex = 0.2)+
+  geom_line(aes(y = pred7, col = "Yearly Spline"))+
+  geom_line(aes(y = pred8, col = "2 df by year Spline"))+
+  geom_line(aes(y = pred9, col = "4 df by year Spline"))+
+  geom_line(aes(y = pred10, col = "8 df by year Spline"))+
+  theme_minimal()+
+  scale_colour_manual(values = c("grey","red", "blue", "green", "dark orange"), 
+                      aesthetics = "colour")+
+  labs(x = "Day of Year", y = "Nº Deaths")+
+  lims(y = limitis)+
+  theme(legend.position = "bottom")
+
+plt_flexible
+```
+
+The splines can take the variability of the series more robustly, even the more rough one, the **Yearly Spline** has done some adaptation to the events of the 1995. This is seems a better adjustment from the last functions, from this we compare those splines between each other, and again take the model with the minor *qAIC*
+
+```{r qaic-spline-models}
+qaic_model7<-QAICM(model7, "dev")
+qaic_model8<-QAICM(model8, "dev")
+qaic_model9<-QAICM(model9, "dev")
+qaic_model10<-QAICM(model10, "dev")
+
+qaic_table_spline<-data.frame(data = c(qaic_model7, qaic_model8, qaic_model9, qaic_model10))
+qaic_table_spline$model<-c("Yearly Spline", "2 df by year spline", "4 df by year", "8 df by year")
+names(qaic_table_spline)<-"qAIC"
+paged_table(qaic_table_spline)
+```
+
+As in the periodic functions, the splines models has the same tendency of better adjustment, as more we given degrees of freedom, better is the adjustment, by the criteria, the splines with 8 df per year was the better model.
+
+In the comparison between strategies of adjustment, we can see periodic functions has very narrow range of values of *qAIC*, for the splines functions we have a more broad range of values of *qAIC*, but the minor overall is the one from splines functions, the 8 df per year. 
+
+A Last test is to see the residuals autocorrelation of each model, and see which has a more natural adjustment for the data. We only take those models which are the best model on each type of covariable function adjustment strategies. 
+
+```{r residuals}
+res_fun<- function(model){
+  res_mod<-residuals(model, type = "response")
+  return(res_mod)
+}
+
+# Only for the best models of each type of covariable
+res_mod5<-res_fun(model5)
+res_mod10<-res_fun(model10)
+acf5<-acf(res_mod5, lag = 30)
+acf10<-acf(res_mod10, lag = 30)
+```
+
+Comparing autocorrelation between models we see the natural splines has a very better autocorrelation, meaning, it has less autcorrelation on the series, which helps to avoid the `glm` to compute spurious association or to give much more or much less importance to extraordinary events, like the the months of 1995 with a higher deaths count from the mean before observed.
+
+# Question 4 {#q4}
+
+**Now study the effects, on short term, until 21 days, of the mean temperature over the cardiovascular mortality. Which parametrization has used? How to interpret the association between temperature and mortality? How much is the minimum mortality temperature?**
+
+## A Look on temperature and mortality **crude** association {#crude}
+
+We want to study the effects of mean temperature on the mortality by cardiovascular causes, in some part we will need to define how to model the temperature lags, and how is the association between both series. To do so we start by look a crude association between both series, to gain understand on how could be model the doses-response association. 
+
+```{r diagnosis}
+span<-.1
+
+temp_death_plt<-data %>% 
+    filter(cvd < mean(cvd)+2*sd(cvd) & cvd > mean(cvd)-2*sd(cvd)) %>% 
+    ggplot(aes(temp, cvd, col = year)) + 
+    geom_point()+
+    stat_smooth(method="loess",span=span,n=1000, col="red", alpha = 0.1)+
+    scale_color_viridis_c(option = "cividis", aesthetics = "colour", alpha = 0.5)+
+    theme_minimal()+
+    labs(subtitle = "Temp-Deahts, Chicago 1987-2000", 
+         x = "Temperature (ºC)", 
+         y = "Cardiovascular Death Counts")+
+    theme(legend.position = "none")
+
+temp_death_plt
+```
+
+From this we see a correlation with more deaths on low temperature, but a very stiff raising on deaths over a certain threshold of temperature. This suggests, at first sight, a almost linear association between deahts and temperature, on the range of 0 Celsius to 20 Celsius degree, and a more non-linear effect over this temperature threshold, not known. The end could be the result of 'harvesting' effects, on after a threshold of temperature, the deaths are greater below this.
+
+## Crossbasis {#cb}
+
+We parametrize the `crossbasis`, with a polynomial with 3 degrees of freedom for the structure of doses-response, so the structure for the relation between point temperature and the cardiovascular mortality is given by a curve that has the shape similar to the graphic above, two end points and a minimum point in this relation of doses-response. 
+
+For the the relation between the lag-response structure, we choose a natural spline, with 3 knots equally spaced on the log-scale. This imposes the that there a mininum of lag-response days, and the end of lags is not has a greater effect but the most recent days has.
+
+The `crossbasis`:
+
+```{r crossbasis}
+datatempcb<-data %>% 
+  filter(cvd < mean(cvd)+2*sd(cvd) & cvd > mean(cvd)-2*sd(cvd))
+argvar=list(fun="poly",degree=3,int=F)# structure doses-response
+nlag<-21
+lagnk <- 3; klag<-logknots(nlag,lagnk) # 
+arglag=list(fun="ns",knots=klag,int=T)# structure lag-response
+cb<-crossbasis(datatempcb$temp, lag=nlag, argvar=argvar, arglag=arglag)
+summary(cb)
+```
+
+Now we proceed to the model, our model will have the following components in the explanation to mortality counts by cardiovascular causes, 
+$$\log(E(Y)) = cb + dow + ns(year)$$
+with $E(Y)$ been the mean counts of daily death by cardiovascular causes, $cb$ the *crossbasis* of lag-response and doses-response to the mean daily temperature, parametrize as above, and $ns(year)$ with 7 degrees of freedom times the number of years over the whole period.
+
+## DLNM {#dlnm}
+
+```{r dlnm}
+library(splines)
+nyear<-length(unique(data$year))
+formula<-"cvd ~ cb+dow+ns(date,df=7*nyear)"
+model.glm<-glm(formula, data=datatempcb, quasipoisson, na.action="na.exclude")  
+summary(model.glm)
+```
+
+## Crosspred {#cp}
+
+Now aimed with the model, we can produce predictions and see how is the impact of exposure and its lags on the outcome. We produce at once a prediction not centered on the MMT and another centered. 
+
+```{r crosspred-non-centered}
+tpred<-quantile(datatempcb$temp, probs=(1:99)/100, na.rm=T)
+pred<-crosspred(cb,model.glm, at=tpred) 
+mmt<-pred$predvar[which.min(pred$allRRfit)]
+plot(pred, 
+     xlab = "Temperature", 
+     theta = 240,
+     phi = 45,
+     ltheta = -90,
+     zlab = "RR", alpha = 0.1)
+```
+
+For not-centered crosspred we have the above surface, from it we can relate effects of temperature are over 20 degrees Celsius, all of this effects happen in not so lagged times, before 5 days. 
+On the opposite, effects of reduced risk are related to greater lags than 5 days. 
+To below 0 temperatures, we have some addition to the risk for very long lags, the smoothing rise around the corner of 20 days lags and -20 degrees. And we have reduced risk around no-lagged times, for negative temperatures.
+
+Now the crossprediction, centered on the Minimum Mortality Temperature (MMT), which is, `r round(mmt, 2)`:
+
+```{r crosspred-centered}
+mmt<-pred$predvar[which.min(pred$allRRfit)] 
+predcen<-crosspred(cb,model.glm, at=tpred,cen=mmt)
+plot(predcen, 
+     xlab = "Temperature", 
+     theta = 240,
+     phi = 45,
+     ltheta = -90,
+     zlab = "RR", bbox = F)
+```
+
+The stiff raising for high temperatures disappeared when crosspreding centered on the MMT, and now the effects seems more related to longer lags than before.
+
+# Question 5 {#q5}
+
+**From the above model, calculates the effects of cold and hot on mortality, consider the percentile of 5% and 95% from the temperature distribution compared to the MMT, respectively for the cold and hot. How do you interprets the effect for cold and hot? Until how many days extend the effects of cold and hot?**
+
+To estimate the effects for each percentile, we take the elements from the `matRRfit` produced from the `crosspred` function at the numbered position which identifies the percentile.  
+
+```{r hot-cold}
+library(tibble)
+library(stringr)
+# Getting the effects of hot and cold
+percentil_min<-5
+percentil_max<-95
+cold_df<-data.frame(RR=predcen$matRRfit[percentil_min,],
+                    LowRR=predcen$matRRlow[percentil_min,],
+                    HighRR=predcen$matRRhigh[percentil_min,],idE="Cold")
+hot_df<-data.frame(RR=predcen$matRRfit[percentil_max,],
+                   LowRR=predcen$matRRlow[percentil_max,],
+                   HighRR=predcen$matRRhigh[percentil_max,],idE="Hot")
+f1<- function(x) { as.numeric(str_sub(x, 4)) }
+cold_df<-rownames_to_column(cold_df, "lag")%>% 
+  mutate_at(1, f1) 
+hot_df<-rownames_to_column(hot_df, "lag")%>% 
+  mutate_at(1, f1)  
+RRVal_lag<-bind_rows(cold_df,hot_df)%>%
+    mutate_at(5,"factor")
+# Plot
+ylab<-pretty(c(RRVal_lag$LowRR,RRVal_lag$HighRR))
+ 
+ RRVal_lag %>% 
+   ggplot(aes(lag, RR, ymin =LowRR , ymax = HighRR)) + 
+   geom_hline(yintercept = 1, size = 0.25) +
+   geom_linerange(aes(x = lag, y = RR, ymin = LowRR, ymax = HighRR, colour = idE),
+                  size = .8, show.legend = FALSE) +
+   geom_point(shape = 21, fill = "white", size = 2, aes(colour = idE),
+              show.legend = FALSE) +
+   scale_x_continuous(breaks = seq(0, 21, 2)) +
+   scale_y_continuous(breaks = ylab) +
+   scale_colour_manual(values = c( "#4575b4","#d73027")) +
+   labs(x = "lag (days)", y = "RR ")+facet_wrap(vars(idE),nrow=2)+
+   theme_minimal()
+
+```
+
+From the plots above, we see the effect of cold, last until the very final lag tested here, i.e. up to 21 days after, a cold-spell has effects on mortality by cardiovascular causes at Chicago. 
+For hot the effects remain constant almost through all the lag series, there less risk around 1 day lag.
+
+We can see in the overall effects of each type of climate event, cold-spells or heat-wave, to do so we plot the overall Relative Risk effects by taking the `allRR*` pieces from the `crosspred` object generated. 
+
+```{r overall-plots}
+#RR total
+ RR_overall<-data.frame(RR=predcen$allRRfit,LowRR=predcen$allRRlow,HighRR=predcen$allRRhigh)
+ RR_overall<-rownames_to_column(RR_overall, "tmean")%>% mutate_at(1, as.numeric)
+ RR_overall[c(5,95),] 
+ mmt<-RR_overall$tmean[RR_overall$RR==1] 
+ 
+ xlab<-pretty(RR_overall$tmean)
+ ylab<-pretty(c(RR_overall$LowRR,RR_overall$HighRR))
+ RR_overall %>% 
+   ggplot(aes(tmean, RR)) + 
+   geom_hline(yintercept = 1, size = 0.5) +
+   geom_vline(xintercept = RR_overall$tmean[c(5,95)], size = 0.5,colour=c("#4575b4","#d73027"),linetype="dashed") +
+   geom_ribbon(aes(ymin = LowRR, 
+                   ymax = HighRR),
+               fill="grey80",alpha=0.2) +
+   geom_line(colour="#cb181d",size=1) +
+   geom_point(aes(mmt,1),shape = 21, fill = "white", size = 2, colour="#cb181d",
+              show.legend = FALSE) +
+   scale_x_continuous(breaks = xlab) +
+   scale_y_continuous(breaks = ylab) +
+   theme_minimal()+
+   theme(panel.grid.minor = element_blank()) +
+   labs(x = "Mean Temperature (ºC)", y = "RR") 
+
+```
+
+The overall effect of temperature is greater and greater as the temperature decreases, this says that cold has more harmful effects on the mortality by cardiovascular causes on Chicago. Another thing to note, from this data, is the Minimum Mortality Temperature, its above the 95th percentile of all temperatures. 
+
+# Extra
+
+## Question 6 {#q6}
+
+**Studies now the effects of air pollution contamination on mortality, with a short range of lags of 7 days. How the `crossbasis` is parametrized? How to interpret the association of contamination and mortality? Until which day of lag it can be observed the effects of contamination on mortality?**
+
+For this part we use a model with up to 7 days of lags from the air pollution contamination (pm10) on the overall mortality. We start by a diagnostic plot:
+
+```{r diag-pm10}
+span<-.1
+
+pm10_death_plt<-data %>% 
+    # filter(resp < mean(resp)+2*sd(resp) & resp > mean(resp)-2*sd(resp)) %>% 
+    ggplot(aes(pm10, death, col = year)) + 
+    geom_point()+
+    stat_smooth(method="loess",span=span,n=1000, col="red", alpha = 0.1)+
+    scale_color_viridis_c(option = "cividis", aesthetics = "colour", alpha = 0.5)+
+    theme_minimal()+
+    labs(subtitle = "Pm10-Deahts, Chicago 1987-2000", 
+         x = "Pm10", 
+         y = "all-causes Death Counts")+
+    theme(legend.position = "none")
+
+pm10_death_plt
+```
+
+Now we parametrize the `crossbasis` as follows:
+
+```{r pm10-crossbasis}
+datapm10cb<-data %>% 
+  filter(!is.na(pm10)) %>% 
+  filter(pm10 < mean(pm10)+2*sd(pm10) & pm10 > mean(pm10)-2*sd(pm10))
+pm10argvar=list(fun="ns",knots=3,int=F)# structure doses-response
+pm10nlag<-7
+pm10lagnk <- 3; pm10klag<-logknots(pm10nlag,pm10lagnk) # 
+pm10arglag=list(fun="ns",knots=pm10klag,int=T)# structure lag-response
+pm10cb<-crossbasis(datapm10cb$pm10, lag=pm10nlag, argvar=pm10argvar, arglag=pm10arglag)
+summary(pm10cb)
+```
+ 
+The model:
+
+```{r pm10-model}
+library(splines)
+nyear<-length(unique(data$year))
+pm10formula<-"death ~ pm10cb+dow+ns(date,df=7*nyear)"
+pm10model.glm<-glm(pm10formula, data=datapm10cb, quasipoisson, na.action="na.exclude")
+summary(pm10model.glm)
+```
+
+Th surface plot for the pm10 model, we see a very stiff raising in hgiher pm10 pollution without effects or less effects due to lags. 
+
+```{r pm10-pred}
+pm10tpred<-quantile(datapm10cb$pm10, probs=(1:99)/100, na.rm=T)
+pm10pred<-crosspred(pm10cb,pm10model.glm, at=pm10tpred)
+pm10mm<-pm10pred$predvar[which.min(pm10pred$allRRfit)] 
+pm10predcen<-crosspred(pm10cb,pm10model.glm, at=pm10tpred,cen=pm10mm)
+plot(pm10predcen, 
+     xlab = "Pm10", 
+     theta = 240,
+     phi = 45,
+     ltheta = -90,
+     zlab = "RR", bbox = F)
+```
+
+The overall effect for the contamination by air pollution, with a very obvious conclusion, the minimum mortality point is when has the minimum air pollution. 
+
+```{r overall-pm10}
+#RR total
+ pm10RR_overall<-data.frame(RR=pm10predcen$allRRfit,
+                            LowRR=pm10predcen$allRRlow,
+                            HighRR=pm10predcen$allRRhigh)
+ pm10RR_overall<-rownames_to_column(pm10RR_overall, "pm10")%>% 
+   mutate_at(1, as.numeric)
+ pm10RR_overall[c(5,95),] 
+ pm10mm<-pm10RR_overall$pm10[pm10RR_overall$RR==1] 
+ 
+ xlab<-pretty(pm10RR_overall$pm10)
+ ylab<-pretty(c(pm10RR_overall$LowRR,pm10RR_overall$HighRR))
+ pm10RR_overall %>% 
+   ggplot(aes(pm10, RR)) + 
+   geom_hline(yintercept = 1, size = 0.5) +
+   geom_vline(xintercept = pm10RR_overall$pm10[c(5,95)], size = 0.5,colour=c("#4575b4","#d73027"),linetype="dashed") +
+   geom_ribbon(aes(ymin = LowRR, 
+                   ymax = HighRR),
+               fill="grey80",alpha=0.2) +
+   geom_line(colour="#cb181d",size=1) +
+   geom_point(aes(pm10mm,1),shape = 21, fill = "white", size = 2, colour="#cb181d",
+              show.legend = FALSE) +
+   scale_x_continuous(breaks = xlab) +
+   scale_y_continuous(breaks = ylab) +
+   theme_minimal()+
+   theme(panel.grid.minor = element_blank()) +
+   labs(x = "Pm10", y = "RR")
+```
+
+The percentile effects could be looked too, for this we trace graphs like as for hot and cold, but understand how the percentile of Pm10 has different effects on the association between mortality-exposure.
+
+```{r percentile-plots}
+library(tibble)
+library(stringr)
+# Getting the effects of hot and cold
+percentil_min<-5
+percentil_max<-95
+percentil_5th_df<-data.frame(RR=pm10predcen$matRRfit[percentil_min,],
+                    LowRR=pm10predcen$matRRlow[percentil_min,],
+                    HighRR=pm10predcen$matRRhigh[percentil_min,],
+                    idE="Pm10 5th Percentil")
+percentil_95th_df<-data.frame(RR=pm10predcen$matRRfit[percentil_max,],
+                   LowRR=pm10predcen$matRRlow[percentil_max,],
+                   HighRR=pm10predcen$matRRhigh[percentil_max,],
+                   idE="Pm10 95th Percentil")
+f1<- function(x) { as.numeric(str_sub(x, 4)) }
+percentil_5th_df<-rownames_to_column(percentil_5th_df, "lag")%>% 
+  mutate_at(1, f1) 
+percentil_95th_df<-rownames_to_column(percentil_95th_df, "lag")%>% 
+  mutate_at(1, f1)  
+pm10RRVal_lag<-bind_rows(percentil_5th_df,percentil_95th_df)%>%
+    mutate_at(5,"factor")
+# Plot
+ylab<-pretty(c(pm10RRVal_lag$LowRR,pm10RRVal_lag$HighRR))
+ 
+ pm10RRVal_lag %>% 
+   ggplot(aes(lag, RR, ymin =LowRR , ymax = HighRR)) + 
+   geom_hline(yintercept = 1, size = 0.25) +
+   geom_linerange(aes(x = lag, y = RR, ymin = LowRR, ymax = HighRR, colour = idE),
+                  size = .8, show.legend = FALSE) +
+   geom_point(shape = 21, fill = "white", size = 2, aes(colour = idE),
+              show.legend = FALSE) +
+   scale_x_continuous(breaks = seq(0, 21, 2)) +
+   scale_y_continuous(breaks = ylab) +
+   scale_colour_manual(values = c( "#4575b4","#d73027")) +
+   labs(x = "lag (days)", y = "RR ")+
+   facet_wrap(vars(idE),nrow=2)+
+   theme_minimal()
+```
+
+The effects of each percentile of Pm10 distribution has different effects related to its lags, the 5th percentile has a minimum immediate effect on mortality and has no increased effect for its lags. On the contrary, the 95th percentile has a greater effect on the mortality, on the lag 0, and has a decreasing effect but still augmented risk on mortality almost up to the last lag day. 
+
+<!-- ## Question 7 {#q7} -->
+
+<!-- **Now use Case-Crossover design to study the effects on short-term (7 days) by stratified time the effects of contamination by atmospheric particles, Pm10. How do you interpret the association between contamination and mortality? What is the difference to the results from time series regression?** -->
+
+<!-- For this we make use of the Conditional Poisson Regression to a data stratification by time variables, like day of the week (dow), day of the year (doy), month and year, and we use the pm10 atmospheric contamination, together with those variables cited before, as explanatory variables to the general mortality and its lags from a range of 7 days.  -->
+
+<!-- ```{r case-crossover} -->
+<!-- library(gnm) -->
+<!-- data_cc<-data %>%  -->
+<!--   filter(!is.na(pm10)) %>%  -->
+<!--   mutate(year = as.factor(year),  -->
+<!--          month = as.factor(month),  -->
+<!--          dow = as.factor(dow),  -->
+<!--          stratum = as.factor(year:month:dow)) # dummmy for the case-crossover, interaction between, year, month and dow -->
+<!-- # The same parametrization for the crossbasis -->
+<!-- pm10argvar=list(fun="ns",knots=3,int=F)# structure doses-response -->
+<!-- pm10nlag<-7 -->
+<!-- pm10lagnk <- 3; pm10klag<-logknots(pm10nlag,pm10lagnk) #  -->
+<!-- pm10arglag=list(fun="ns",knots=pm10klag,int=T)# structure lag-response -->
+<!-- pm10cb<-crossbasis(data_cc$pm10, lag=pm10nlag, argvar=pm10argvar, arglag=pm10arglag) -->
+<!-- # conditional Poisson Case-crossover Model for the association between pm10 and mortality -->
+<!-- model.ccpm10 <- gnm(death ~ pm10cb + pm10 , data=data_cc, family=quasipoisson, eliminate=factor(stratum)) -->
+<!-- pm10tpred<-quantile(data_cc$pm10, probs = (1:99)/100, na.rm = TRUE) -->
+<!-- predccpm10<-crosspred(pm10cb, model.ccpm10, at = pm10tpred) -->
+<!-- pm10ccmm<-predccpm10$predvar[which.min(predccpm10$allRRfit)] -->
+<!-- predccpm10<-crosspred(pm10cb, model.ccpm10, at = pm10tpred, cen = pm10ccmm) -->
+<!-- # Getting the effects of hot and cold -->
+<!-- percentil_min<-5 -->
+<!-- percentil_max<-95 -->
+<!-- cc_percentil_5th_df<-data.frame(RR=predccpm10$matRRfit[percentil_min,], -->
+<!--                     LowRR=predccpm10$matRRlow[percentil_min,], -->
+<!--                     HighRR=predccpm10$matRRhigh[percentil_min,], -->
+<!--                     idE="Pm10 5th Percentil") -->
+<!-- cc_percentil_95th_df<-data.frame(RR=predccpm10$matRRfit[percentil_max,], -->
+<!--                    LowRR=predccpm10$matRRlow[percentil_max,], -->
+<!--                    HighRR=predccpm10$matRRhigh[percentil_max,], -->
+<!--                    idE="Pm10 95th Percentil") -->
+<!-- f1<- function(x) { as.numeric(str_sub(x, 4)) } -->
+<!-- cc_percentil_5th_df<-rownames_to_column(cc_percentil_5th_df, "lag")%>%  -->
+<!--   mutate_at(1, f1)  -->
+<!-- cc_percentil_95th_df<-rownames_to_column(cc_percentil_95th_df, "lag")%>%  -->
+<!--   mutate_at(1, f1)   -->
+<!-- cc_pm10RRVal_lag<-bind_rows(cc_percentil_5th_df,cc_percentil_95th_df)%>% -->
+<!--     mutate_at(5,"factor") -->
+<!-- # Plot -->
+<!-- ylab<-pretty(c(cc_pm10RRVal_lag$LowRR,cc_pm10RRVal_lag$HighRR)) -->
+
+<!--  cc_pm10RRVal_lag %>%  -->
+<!--    ggplot(aes(lag, RR, ymin =LowRR , ymax = HighRR)) +  -->
+<!--    geom_hline(yintercept = 1, size = 0.25) + -->
+<!--    geom_linerange(aes(x = lag, y = RR, ymin = LowRR, ymax = HighRR, colour = idE), -->
+<!--                   size = .8, show.legend = FALSE) + -->
+<!--    geom_point(shape = 21, fill = "white", size = 2, aes(colour = idE), -->
+<!--               show.legend = FALSE) + -->
+<!--    scale_x_continuous(breaks = seq(0, 21, 2)) + -->
+<!--    scale_y_continuous(breaks = ylab) + -->
+<!--    scale_colour_manual(values = c( "#4575b4","#d73027")) + -->
+<!--    labs(x = "lag (days)", y = "RR ")+ -->
+<!--    facet_wrap(vars(idE),nrow=2)+ -->
+<!--    theme_minimal() -->
+<!-- ``` -->
+
+# References
+
+<div id="refs"></div>
+
+# Session info {-}
+
+```{r}
+sessionInfo()
+```
+
+
+
